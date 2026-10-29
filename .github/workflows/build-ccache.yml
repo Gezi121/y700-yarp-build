@@ -42,6 +42,8 @@ jobs:
           mkdir -p logs dist
 
       - name: Sync pinned YARP and TB322FC sources
+        env:
+          GEZI_TOKEN: ${{ secrets.GEZI_TOKEN }}
         run: bash scripts/build-yarp.sh sync 2>&1 | tee logs/sync.log
 
       - name: Prepare ccache directory

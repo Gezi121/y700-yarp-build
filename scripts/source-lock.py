@@ -1,10 +1,19 @@
 """Generate a Repo overlay or verify the pinned YARP projects after sync."""
 
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
+
+
+def device_fetch_url():
+    """Private device repo needs an authenticated fetch URL on Actions."""
+    token = os.environ.get("GEZI_TOKEN", "")
+    if token:
+        return f"https://x-access-token:{token}@github.com/Gezi121"
+    return "https://github.com/Gezi121"
 
 
 def main():
@@ -18,7 +27,7 @@ def main():
                 **project, "upstream": "refs/heads/twrp-16.0"
             })
         ET.SubElement(manifest, "remote", {
-            "name": "yarp-device", "fetch": "https://github.com/Gezi121"
+            "name": "yarp-device", "fetch": device_fetch_url()
         })
         ET.SubElement(manifest, "project", {
             "name": lock["device"]["name"],
