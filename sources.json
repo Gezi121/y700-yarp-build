@@ -1,0 +1,19 @@
+{
+  "manifest": {
+    "url": "https://github.com/TWRP-Test/platform_manifest_twrp_aosp.git",
+    "revision": "814b553116ceedde197f70389cff9661d81d8337"
+  },
+  "projects": [
+    {"name": "android_build_soong", "path": "build/soong", "revision": "95e4cb167d65d5f2a034f1eeac73a920adebc09d"},
+    {"name": "android_bootable_recovery", "path": "bootable/recovery", "revision": "8a58fc3b586b8a908337fa87529cfbbb119ec7bb"},
+    {"name": "android_system_vold", "path": "system/vold", "revision": "e7e26ed2ffd9ad0469a05515cfd91940a3366d19"},
+    {"name": "android_external_lvgl", "path": "external/lvgl", "revision": "28714550785a8bb620da697346eb6c8c5f61b7ec"},
+    {"name": "android_external_libvpx", "path": "external/libvpx", "revision": "b8cba757f9e2587726547adc1b4e790129b338e2"},
+    {"name": "android_external_libwebm", "path": "external/libwebm", "revision": "99fcd14602ba76998d086b602f29a243e1d5c835"}
+  ],
+  "device": {
+    "name": "android_device_lenovo_TB322FC",
+    "path": "device/lenovo/TB322FC",
+    "revision": "main"
+  }
+}
