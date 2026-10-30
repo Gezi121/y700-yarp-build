@@ -105,6 +105,47 @@ if '#include <unistd.h>' not in s:
 open(p, 'w').write(s)
 print('PATCH 2: applied weaver retry patch')
 PY
+
+    # -------------------------------------------------------------------
+    # PATCH 3: GUI2 brings the display up exactly once. On this platform
+    # /dev/dri/card0 (and the panel backlight node) only appear ~1-2 s after
+    # init starts, so the first probe fails, gui2_start() returns
+    # GUI2_EXIT_INITIALIZATION_FAILED and twrp.cpp keeps the legacy XML GUI
+    # for the whole session (the device looked like plain TWRP 3.7.1).
+    # Wait for both nodes, bounded, right before the UI/brightness probe.
+    # -------------------------------------------------------------------
+    python3 - <<'PY'
+import sys
+p = 'bootable/recovery/twrp.cpp'
+s = open(p).read()
+if 'Fox (Y700): the display stack shows up' in s:
+    print('PATCH 3: display wait already present; skip')
+    sys.exit(0)
+old = (
+    '\t// Load default values to set DataManager constants and handle ifdefs\n'
+    '\tDataManager::SetDefaultValues();'
+)
+new = (
+    '\t// Fox (Y700): the display stack shows up ~1-2 s after init starts.\n'
+    '\t// GUI2 initializes DRM exactly once; if that open fails twrp.cpp keeps\n'
+    '\t// the legacy XML GUI for the whole session, so probe it once ready.\n'
+    '\tfor (int waited_ms = 0; waited_ms < 10000; waited_ms += 100) {\n'
+    '\t\tif (access("/dev/dri/card0", F_OK) == 0 &&\n'
+    '\t\t    access("/sys/class/backlight/panel0-backlight/brightness", F_OK) == 0)\n'
+    '\t\t\tbreak;\n'
+    '\t\tusleep(100000);\n'
+    '\t}\n'
+    '\n'
+    '\t// Load default values to set DataManager constants and handle ifdefs\n'
+    '\tDataManager::SetDefaultValues();'
+)
+if old not in s:
+    print('PATCH 3: WARNING anchor not found; skipped (non-fatal)')
+    sys.exit(0)
+s = s.replace(old, new, 1)
+open(p, 'w').write(s)
+print('PATCH 3: applied display-ready wait patch')
+PY
     echo '--- patches applied ---'
     ;;
 
