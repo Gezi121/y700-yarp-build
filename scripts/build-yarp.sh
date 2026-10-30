@@ -28,10 +28,90 @@ case "${1:-}" in
       exit 1
     fi
     ;;
+
+  patch)
+    cd "${source_root}"
+    # -------------------------------------------------------------------
+    # PATCH 1 (critical): AOSP recovery builds ship servicemanager.recovery,
+    # which links the VintfObjectRecovery stub. That stub returns an EMPTY
+    # VINTF manifest, so servicemanager rejects registration of every AIDL
+    # HAL ("Could not find ... in the VINTF manifest") and the HAL aborts
+    # with SIGABRT. Dropping the package lets the full servicemanager (which
+    # really reads /vendor/etc/vintf/manifest.xml) into the recovery image.
+    # Same fix as MissMyTime/twrp_device_sm8850 (build_make patch).
+    # -------------------------------------------------------------------
+    python3 - <<'PY'
+import sys
+p = 'build/make/target/product/base_vendor.mk'
+s = open(p).read()
+if 'servicemanager.recovery' not in s:
+    print('PATCH 1: servicemanager.recovery already absent; skip')
+    sys.exit(0)
+out = []
+removed = 0
+for line in s.splitlines(True):
+    if line.strip() == 'servicemanager.recovery \\':
+        removed += 1
+        continue
+    out.append(line)
+open(p, 'w').write(''.join(out))
+print('PATCH 1: removed servicemanager.recovery from base_vendor.mk (%d line)' % removed)
+PY
+
+    # -------------------------------------------------------------------
+    # PATCH 2: vold's Weaver AIDL getConfig gives up after a single try.
+    # The SPU weaver service only becomes ready after spdaemon/sec_nvm come
+    # up, and vold usually asks earlier on a cold boot. Retry 80 x 250ms
+    # (~20s) and validate keySize/valueSize like the reference tree does.
+    # Same fix as MissMyTime/twrp_device_sm8850 (system_vold patch).
+    # -------------------------------------------------------------------
+    python3 - <<'PY'
+import sys
+p = 'system/vold/Weaver1.cpp'
+s = open(p).read()
+marker = '\t\tfor (int attempt = 0; attempt < 80; attempt++) {'
+if marker in s:
+    print('PATCH 2: weaver retry already present; skip')
+    sys.exit(0)
+old = (
+    '\tif (mAidlDevice != nullptr) {\n'
+    '\t\tauto r = mAidlDevice->getConfig(&aidlConfig);\n'
+    '\t\tif (r.isOk()) {\n'
+    '\t\t\tGottenConfig = true;\n'
+    '\t\t\treturn true;\n'
+    '\t\t}\n'
+    '\t\treturn false;\n'
+    '\t}'
+)
+new = (
+    '\tif (mAidlDevice != nullptr) {\n'
+    '\t\tfor (int attempt = 0; attempt < 80; attempt++) {\n'
+    '\t\t\tauto r = mAidlDevice->getConfig(&aidlConfig);\n'
+    '\t\t\tif (r.isOk() && aidlConfig.keySize > 0 && aidlConfig.valueSize > 0) {\n'
+    '\t\t\t\tGottenConfig = true;\n'
+    '\t\t\t\treturn true;\n'
+    '\t\t\t}\n'
+    '\t\t\tusleep(250000);\n'
+    '\t\t}\n'
+    '\t\treturn false;\n'
+    '\t}'
+)
+if old not in s:
+    print('PATCH 2: WARNING original weaver block not found; skipped (non-fatal)')
+    sys.exit(0)
+s = s.replace(old, new)
+if '#include <unistd.h>' not in s:
+    s = s.replace('#include <iostream>', '#include <iostream>\n#include <unistd.h>', 1)
+open(p, 'w').write(s)
+print('PATCH 2: applied weaver retry patch')
+PY
+    echo '--- patches applied ---'
+    ;;
+
   build)
     cd "${source_root}"
-    # Y700 Gen4 为 ramdisk-only recovery（v4 header, kernel_size=0），
-    # 直接使用 GKI 内核引导参数，无外部预编译内核依赖。
+    # Y700 Gen4 builds a ramdisk-only recovery (v4 header, kernel_size=0),
+    # so no external prebuilt kernel is required.
     export ALLOW_MISSING_DEPENDENCIES=true
     if [ -n "${CCACHE_DIR:-}" ]; then
       export USE_CCACHE=1
@@ -52,6 +132,7 @@ case "${1:-}" in
     mka -j"${BUILD_JOBS:-2}" installclean
     mka -j"${BUILD_JOBS:-2}" recoveryimage
     ;;
+
   package)
     product_root="${source_root}/out/target/product/TB322FC"
     python3 "${builder_root}/scripts/verify-image.py" "${product_root}" > "${dist_root}/verification.json"
@@ -60,8 +141,9 @@ case "${1:-}" in
     sha256sum YARP-TB322FC-recovery.img > SHA256SUMS.txt
     cat verification.json
     ;;
+
   *)
-    printf 'Usage: %s {sync|build|package}\n' "$0" >&2
+    printf 'Usage: %s {sync|patch|build|package}\n' "$0" >&2
     exit 2
     ;;
 esac

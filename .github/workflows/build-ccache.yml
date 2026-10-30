@@ -1,4 +1,4 @@
-name: Build YARP TB322FC (ccache)
+﻿name: Build YARP TB322FC (ccache)
 
 on:
   workflow_dispatch:
@@ -45,6 +45,9 @@ jobs:
         env:
           GEZI_TOKEN: ${{ secrets.GEZI_TOKEN }}
         run: bash scripts/build-yarp.sh sync 2>&1 | tee logs/sync.log
+
+      - name: Apply Y700 source patches
+        run: bash scripts/build-yarp.sh patch 2>&1 | tee logs/patch.log
 
       - name: Prepare ccache directory
         run: |
