@@ -27,7 +27,7 @@
     {
       "name": "android_external_libvpx",
       "path": "external/libvpx",
-      "revision": "b8cba757f9e2587726547adc1b4e790129b338e2"
+      "revision": "f42506c3faf4592a9d8929c9ca832fd72fff94a0"
     },
     {
       "name": "android_external_libwebm",
