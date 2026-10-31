@@ -35,8 +35,18 @@ def main():
     binary = executable.read_bytes()
     require(binary[:4] == b"\x7fELF" and len(binary) > 20, "Recovery is not an ELF executable")
     require(struct.unpack_from("<H", binary, 18)[0] == 183, "Recovery is not AArch64")
-    require(b"Yet Another Recovery Project" in binary, "YARP language resources are missing")
-    require(b"gui2" in binary.lower(), "GUI2 runtime markers are missing")
+    # gui2 branding lives in the gui2 shared library since the recovery-tip
+    # link type change (libgui2.so), no longer in the main executable. Scan
+    # the executable plus every staged shared library for the markers.
+    scanned = {executable: binary}
+    for lib in sorted(root.rglob("libgui2*.so")):
+        scanned[lib] = lib.read_bytes()
+    require(scanned, "No staged recovery binaries to scan")
+    all_blobs = b"\n".join(scanned.values())
+    require(b"Yet Another Recovery Project" in all_blobs,
+            "YARP language resources are missing (scanned: "
+            + ", ".join(str(p.relative_to(root)) for p in scanned) + ")")
+    require(b"gui2" in all_blobs.lower(), "GUI2 runtime markers are missing")
     fonts = ["wqy-microhei.ttf", "DroidSansMono.ttf"]
     for font in fonts:
         path = root / "twres/fonts" / font
