@@ -176,7 +176,7 @@ new = (
     '  // registered; fox_spu_bringup.sh sets twrp.spu.ready (or\n'
     '  // twrp.spu.failed) when it is done.\n'
     '  if (TWFunc::IsPathExists("/dev/spcom")) {\n'
-    '    for (int waited = 0; waited < 300; ++waited) {\n'
+    '    for (int waited = 0; waited < 80; ++waited) {\n'
     '      const std::string spu_state_ready =\n'
     '          android::base::GetProperty("twrp.spu.ready", "");\n'
     '      const std::string spu_state_failed =\n'
