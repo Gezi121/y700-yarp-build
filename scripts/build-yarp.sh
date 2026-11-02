@@ -146,6 +146,60 @@ s = s.replace(old, new, 1)
 open(p, 'w').write(s)
 print('PATCH 3: applied display-ready wait patch')
 PY
+
+    # -------------------------------------------------------------------
+    # PATCH 4: TWRP runs its only metadata-decrypt pass during startup, long
+    # before fox_spu_bringup.sh has loaded sp_keymaster into the SPU, so the
+    # wrapped key cannot be exported and /data stays locked. The old fallback
+    # was to restart the recovery process once the chain was up (v1.6 finally
+    # decrypted that way). Block that single pass until the bring-up script
+    # reports twrp.spu.ready, so the first pass succeeds and no UI reload
+    # happens. A failed bring-up sets twrp.spu.failed and is not waited on.
+    # -------------------------------------------------------------------
+    python3 - <<'PY'
+import sys
+p = 'bootable/recovery/partitionmanager.cpp'
+s = open(p).read()
+if 'Fox (Y700): wait for the SPU/TA chain' in s:
+    print('PATCH 4: SPU wait already present; skip')
+    sys.exit(0)
+old = (
+    'void TWPartitionManager::DecryptData() {\n'
+    '#ifdef TW_INCLUDE_CRYPTO\n'
+)
+new = (
+    'void TWPartitionManager::DecryptData() {\n'
+    '#ifdef TW_INCLUDE_CRYPTO\n'
+    '  // Fox (Y700): wait for the SPU/TA chain before the one-shot metadata\n'
+    '  // decrypt. The wrapped metadata key can only be exported once\n'
+    '  // sp_keymaster is loaded into the SPU and the keymint HALs have\n'
+    '  // registered; fox_spu_bringup.sh sets twrp.spu.ready (or\n'
+    '  // twrp.spu.failed) when it is done.\n'
+    '  if (TWFunc::IsPathExists("/dev/spcom")) {\n'
+    '    for (int waited = 0; waited < 300; ++waited) {\n'
+    '      const std::string spu_state_ready =\n'
+    '          android::base::GetProperty("twrp.spu.ready", "");\n'
+    '      const std::string spu_state_failed =\n'
+    '          android::base::GetProperty("twrp.spu.failed", "");\n'
+    '      if (spu_state_ready == "true" || spu_state_failed == "true")\n'
+    '        break;\n'
+    '      if (waited % 20 == 0)\n'
+    '        LOGINFO("waiting for the SPU/TA chain before metadata decrypt (%ds)\\n",\n'
+    '                waited / 2);\n'
+    '      usleep(500000);\n'
+    '    }\n'
+    '    LOGINFO("SPU/TA wait done: ready=\'%s\' failed=\'%s\'\\n",\n'
+    '            android::base::GetProperty("twrp.spu.ready", "").c_str(),\n'
+    '            android::base::GetProperty("twrp.spu.failed", "").c_str());\n'
+    '  }\n'
+)
+if old not in s:
+    print('PATCH 4: WARNING anchor not found; skipped (non-fatal)')
+    sys.exit(0)
+s = s.replace(old, new, 1)
+open(p, 'w').write(s)
+print('PATCH 4: applied SPU/TA ready wait before metadata decrypt')
+PY
     echo '--- patches applied ---'
     ;;
 
