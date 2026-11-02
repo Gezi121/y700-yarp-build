@@ -150,11 +150,11 @@ PY
     # -------------------------------------------------------------------
     # PATCH 4: TWRP runs its only metadata-decrypt pass during startup, long
     # before fox_spu_bringup.sh has loaded sp_keymaster into the SPU, so the
-    # wrapped key cannot be exported and /data stays locked. The old fallback
-    # was to restart the recovery process once the chain was up (v1.6 finally
-    # decrypted that way). Block that single pass until the bring-up script
-    # reports twrp.spu.ready, so the first pass succeeds and no UI reload
-    # happens. A failed bring-up sets twrp.spu.failed and is not waited on.
+    # wrapped key cannot be exported and /data stays locked. v1.6 handled that
+    # by restarting the recovery process once the chain was up, which works but
+    # costs a visible reload. Blocking the pass instead (v1.7) traded it for 80
+    # seconds of blank UI - worse. So: hook the wait in, but keep it disabled by
+    # default via twrp.spu_wait_ms, settable at runtime for A/B testing.
     # -------------------------------------------------------------------
     python3 - <<'PY'
 import sys
@@ -170,22 +170,26 @@ old = (
 new = (
     'void TWPartitionManager::DecryptData() {\n'
     '#ifdef TW_INCLUDE_CRYPTO\n'
-    '  // Fox (Y700): wait for the SPU/TA chain before the one-shot metadata\n'
-    '  // decrypt. The wrapped metadata key can only be exported once\n'
+    '  // Fox (Y700): optionally wait for the SPU/TA chain before the one-shot\n'
+    '  // metadata decrypt. The wrapped metadata key can only be exported once\n'
     '  // sp_keymaster is loaded into the SPU and the keymint HALs have\n'
-    '  // registered; fox_spu_bringup.sh sets twrp.spu.ready (or\n'
-    '  // twrp.spu.failed) when it is done.\n'
+    '  // registered; fox_spu_bringup.sh sets twrp.spu.ready when it is done.\n'
+    '  // Default 0 = do not block: the UI comes up at once and the script\n'
+    '  // restarts recovery only when /data is still locked (a visible reload).\n'
+    '  // Raising twrp.spu_wait_ms trades that reload for a blocked decrypt\n'
+    '  // page, which measured far worse on this device (80 s of blank UI).\n'
     '  if (TWFunc::IsPathExists("/dev/spcom")) {\n'
-    '    for (int waited = 0; waited < 80; ++waited) {\n'
+    '    const int spu_wait_ms =\n'
+    '        android::base::GetIntProperty("twrp.spu_wait_ms", 0);\n'
+    '    for (int waited = 0; waited * 500 < spu_wait_ms; ++waited) {\n'
     '      const std::string spu_state_ready =\n'
     '          android::base::GetProperty("twrp.spu.ready", "");\n'
     '      const std::string spu_state_failed =\n'
     '          android::base::GetProperty("twrp.spu.failed", "");\n'
     '      if (spu_state_ready == "true" || spu_state_failed == "true")\n'
     '        break;\n'
-    '      if (waited % 20 == 0)\n'
-    '        LOGINFO("waiting for the SPU/TA chain before metadata decrypt (%ds)\\n",\n'
-    '                waited / 2);\n'
+    '      LOGINFO("waiting for the SPU/TA chain before metadata decrypt (%d ms)\\n",\n'
+    '              waited * 500);\n'
     '      usleep(500000);\n'
     '    }\n'
     '    LOGINFO("SPU/TA wait done: ready=\'%s\' failed=\'%s\'\\n",\n'
