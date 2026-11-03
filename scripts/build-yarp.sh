@@ -97,8 +97,9 @@ new = (
     '\t}'
 )
 if old not in s:
-    print('PATCH 2: WARNING original weaver block not found; skipped (non-fatal)')
-    sys.exit(0)
+    print('PATCH 2: ERROR vold Weaver1.cpp anchor not found; the CE/weaver path '
+          'would ship unpatched, refusing to build')
+    sys.exit(1)
 s = s.replace(old, new)
 if '#include <unistd.h>' not in s:
     s = s.replace('#include <iostream>', '#include <iostream>\n#include <unistd.h>', 1)
@@ -140,75 +141,40 @@ new = (
     '\tDataManager::SetDefaultValues();'
 )
 if old not in s:
-    print('PATCH 3: WARNING anchor not found; skipped (non-fatal)')
-    sys.exit(0)
+    print('PATCH 3: ERROR twrp.cpp anchor not found; GUI2 would fall back to the '
+          'legacy UI, refusing to build')
+    sys.exit(1)
 s = s.replace(old, new, 1)
 open(p, 'w').write(s)
 print('PATCH 3: applied display-ready wait patch')
 PY
 
-    # -------------------------------------------------------------------
-    # PATCH 4: TWRP runs its only metadata-decrypt pass during startup, long
-    # before fox_spu_bringup.sh has loaded sp_keymaster into the SPU, so the
-    # wrapped key cannot be exported and /data stays locked. v1.6 handled that
-    # by restarting the recovery process once the chain was up, which works but
-    # costs a visible reload. Blocking the pass instead (v1.7) traded it for 80
-    # seconds of blank UI - worse. So: hook the wait in, but keep it disabled by
-    # default via twrp.spu_wait_ms, settable at runtime for A/B testing.
-    # -------------------------------------------------------------------
-    python3 - <<'PY'
-import sys
-p = 'bootable/recovery/partitionmanager.cpp'
-s = open(p).read()
-if 'Fox (Y700): wait for the SPU/TA chain' in s:
-    print('PATCH 4: SPU wait already present; skip')
-    sys.exit(0)
-old = (
-    'void TWPartitionManager::DecryptData() {\n'
-    '#ifdef TW_INCLUDE_CRYPTO\n'
-)
-new = (
-    'void TWPartitionManager::DecryptData() {\n'
-    '#ifdef TW_INCLUDE_CRYPTO\n'
-    '  // Fox (Y700): optionally wait for the SPU/TA chain before the one-shot\n'
-    '  // metadata decrypt. The wrapped metadata key can only be exported once\n'
-    '  // sp_keymaster is loaded into the SPU and the keymint HALs have\n'
-    '  // registered; fox_spu_bringup.sh sets twrp.spu.ready when it is done.\n'
-    '  // Default 0 = do not block: the UI comes up at once and the script\n'
-    '  // restarts recovery only when /data is still locked (a visible reload).\n'
-    '  // Raising twrp.spu_wait_ms trades that reload for a blocked decrypt\n'
-    '  // page, which measured far worse on this device (80 s of blank UI).\n'
-    '  if (TWFunc::IsPathExists("/dev/spcom")) {\n'
-    '    const int spu_wait_ms =\n'
-    '        android::base::GetIntProperty("twrp.spu_wait_ms", 0);\n'
-    '    for (int waited = 0; waited * 500 < spu_wait_ms; ++waited) {\n'
-    '      const std::string spu_state_ready =\n'
-    '          android::base::GetProperty("twrp.spu.ready", "");\n'
-    '      const std::string spu_state_failed =\n'
-    '          android::base::GetProperty("twrp.spu.failed", "");\n'
-    '      if (spu_state_ready == "true" || spu_state_failed == "true")\n'
-    '        break;\n'
-    '      LOGINFO("waiting for the SPU/TA chain before metadata decrypt (%d ms)\\n",\n'
-    '              waited * 500);\n'
-    '      usleep(500000);\n'
-    '    }\n'
-    '    LOGINFO("SPU/TA wait done: ready=\'%s\' failed=\'%s\'\\n",\n'
-    '            android::base::GetProperty("twrp.spu.ready", "").c_str(),\n'
-    '            android::base::GetProperty("twrp.spu.failed", "").c_str());\n'
-    '  }\n'
-)
-if old not in s:
-    print('PATCH 4: WARNING anchor not found; skipped (non-fatal)')
-    sys.exit(0)
-s = s.replace(old, new, 1)
-open(p, 'w').write(s)
-print('PATCH 4: applied SPU/TA ready wait before metadata decrypt')
-PY
     echo '--- patches applied ---'
     ;;
 
   build)
     cd "${source_root}"
+    # Build integrity: the image must be built from the v1.6 decrypt shape.
+    # PATCH 4 (a DecryptData wait gated on /dev/spcom) is gone because that gate
+    # can never be true at DecryptData time, and these greps make a silently
+    # skipped patch a build failure instead of a half-fixed recovery.
+    if grep -q 'Fox (Y700)' bootable/recovery/partitionmanager.cpp; then
+      echo '::error::partitionmanager.cpp still carries the removed PATCH 4'
+      exit 1
+    fi
+    if ! grep -q 'Fox (Y700): the display stack shows up' bootable/recovery/twrp.cpp; then
+      echo '::error::PATCH 3 (display-ready wait) missing from twrp.cpp'
+      exit 1
+    fi
+    if ! grep -q 'attempt < 80' system/vold/Weaver1.cpp; then
+      echo '::error::PATCH 2 (weaver retry) missing from vold/Weaver1.cpp'
+      exit 1
+    fi
+    if grep -q 'servicemanager.recovery' build/make/target/product/base_vendor.mk; then
+      echo '::error::PATCH 1 did not drop servicemanager.recovery'
+      exit 1
+    fi
+    echo 'build integrity: PATCH 1-3 verified in the synced tree'
     # Y700 Gen4 builds a ramdisk-only recovery (v4 header, kernel_size=0),
     # so no external prebuilt kernel is required.
     export ALLOW_MISSING_DEPENDENCIES=true
