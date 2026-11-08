@@ -42,6 +42,10 @@ def main():
     elif command == "verify":
         projects = [{"path": ".repo/manifests", **lock["manifest"]}]
         projects += lock["projects"]
+        device_revision = lock["device"]["revision"]
+        if len(device_revision) != 40 or any(c not in "0123456789abcdef" for c in device_revision):
+            raise RuntimeError("Device tree must be pinned to a full commit SHA")
+        projects.append(lock["device"])
         for project in projects:
             actual = subprocess.check_output(
                 ["git", "-C", str(source / project["path"]), "rev-parse", "HEAD"],

@@ -1,9 +1,10 @@
 # y700-yarp-build
 
-联想拯救者 Y700 四代（TB322FC / elden / SM8750 `sun`）的 **YARP（TWRP-Test twrp-16.0，GUI2/LVGL）** 云端构建仓库。
+联想拯救者 Y700 四代至尊版（TB322FC / elden / SM8750P `sun`）的 **YARP（TWRP-Test twrp-16.0，GUI2/LVGL）** 云端构建仓库。
 
 - 设备树：[Gezi121/android_device_lenovo_TB322FC](https://github.com/Gezi121/android_device_lenovo_TB322FC)
-- 解密分析（C17/A17）：见 [DECRYPT_NOTES.md](DECRYPT_NOTES.md)
+- 当前解密修复和兼容范围：见 [启动修复说明](docs/DECRYPT_STARTUP_20261109.md)
+- 历史解密分析（C17/A17）：见 [DECRYPT_NOTES.md](DECRYPT_NOTES.md)
 
 ## 用法
 

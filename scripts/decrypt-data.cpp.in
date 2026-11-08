@@ -1,0 +1,110 @@
+void TWPartitionManager::DecryptData() {
+#ifdef TW_INCLUDE_CRYPTO
+  if (TWPartition* data = FindPartitionByPath("/data");
+      data && data->is_encrypted_ && !data->is_decrypted_) {
+    // TB322FC: SPU readiness contract v1
+    // ProcessFstab has finished loading modules. SetupFstabPartitions has
+    // released system/vendor and published storage.ready before reaching here.
+    // Waiting HERE cannot block the module loader, unlike a wait in ProcessFstab.
+    if (access("/system/bin/fox_spu_bringup.sh", F_OK) == 0) {
+      if (android::base::GetProperty(TW_FASTBOOT_MODE_PROP, "0") == "1") return;
+      if (android::base::GetProperty("twrp.storage.ready", "0") != "1") {
+        gui2_console::write_raw(gui2_console::severity::error,
+                               "SPU: startup storage cleanup is incomplete\n");
+        return;
+      }
+      if (!android::base::GetBoolProperty("twrp.spu.ready", false)) {
+        // Restart a FAILED oneshot only for a new explicit decrypt request.
+        // A still-running preparation is allowed to finish; do not reset it.
+        if (android::base::GetProperty("init.svc.fox_spu_bringup", "") != "running") {
+          android::base::SetProperty("twrp.spu.failed", "false");
+          android::base::SetProperty("twrp.spu.requested", "0");
+          android::base::SetProperty("twrp.spu.requested", "1");
+        }
+        gui2_console::write_raw(gui2_console::severity::normal,
+                               "Preparing secure storage; see /tmp/fox_spu.log\n");
+        // This is an upper bound, not a fixed sleep: wake immediately on ready
+        // or failure. No HAL call and no recovery service restart on timeout.
+        for (int elapsed_ms = 0; elapsed_ms < 180000; elapsed_ms += 100) {
+          if (android::base::GetBoolProperty("twrp.spu.ready", false) ||
+              android::base::GetBoolProperty("twrp.spu.failed", false)) break;
+          usleep(100000);
+        }
+        if (!android::base::GetBoolProperty("twrp.spu.ready", false)) {
+          const std::string reason = android::base::GetProperty(
+              "twrp.decrypt.reason", "SPU: readiness timed out; see /tmp/fox_spu.log");
+          gui2_console::write_raw(gui2_console::severity::error, reason + "\n");
+          return;
+        }
+      }
+    }
+    const auto fail_decrypt = [&](const std::string& reason) {
+      data->is_decrypted_ = false;
+      DataManager::SetValue(TW_IS_DECRYPTED, 0);
+      DataManager::SetValue(TW_IS_ENCRYPTED, 1);
+      android::base::SetProperty("twrp.decrypt.reason", reason);
+      gui2_console::write_raw(gui2_console::severity::error, reason + "\n");
+    };
+    SetCryptoState();
+    if (const TWPartition* key_dir = FindPartitionByPath(data->key_directory_);
+        key_dir && !key_dir->IsMounted())
+      MountByPath(data->key_directory_, false);
+    if (!data->key_directory_.empty()) {
+      SetCryptoType("file");
+#ifdef TW_INCLUDE_FBE_METADATA_DECRYPT
+#ifdef USE_FSCRYPT
+      std::string crypto_blkdev = data->decrypted_block_device_;
+      if (!crypto_blkdev.empty() && !TWFunc::IsPathExists(crypto_blkdev))
+        crypto_blkdev.clear();
+      if (crypto_blkdev.empty())
+        crypto_blkdev = android::base::GetProperty("ro.crypto.fs_crypto_blkdev", "error");
+      const bool reused_mapping =
+          crypto_blkdev != "error" && TWFunc::IsPathExists(crypto_blkdev);
+      constexpr std::vector<bool> device_aliased;
+      if (constexpr std::vector<std::string> user_devices;
+          reused_mapping ||
+          android::vold::fscrypt_mount_metadata_encrypted(
+              data->actual_block_device_, data->mount_point_, false, false,
+              data->current_file_system_, false, user_devices, device_aliased, 0,
+              TWFunc::IsPathExists(additional_fstab) ? additional_fstab : "")) {
+        if (!reused_mapping)
+          crypto_blkdev = android::base::GetProperty("ro.crypto.fs_crypto_blkdev", "error");
+        data->decrypted_block_device_ = crypto_blkdev;
+        LOGINFO("Successfully decrypted metadata encrypted data partition with new block device: '%s'\n",
+                crypto_blkdev.c_str());
+#endif
+        data->is_decrypted_ = true;
+        bool mounted = false;
+        for (int attempt = 0; attempt < 10; ++attempt) {
+          if (data->Mount(false)) { mounted = true; break; }
+          usleep(50000);
+        }
+        if (!mounted) {
+          fail_decrypt("Metadata unlocked, but /data mount failed; see recovery.log");
+          return;
+        }
+        if (!data->DecryptFbeDe()) {
+          fail_decrypt("Metadata unlocked, but FBE device keys failed; see recovery.log");
+          return;
+        }
+      } else {
+        fail_decrypt("Metadata key unlock failed; see recovery.log and fox_spu.log");
+        return;
+      }
+#else
+      fail_decrypt("Metadata FBE support is missing from this build");
+      return;
+#endif
+    }
+    if (data->is_fbe_ && DataManager::GetIntValue(TW_CRYPTO_PWTYPE) == 0) {
+      if (DecryptDevice("!") == 0) {
+        gui2_console::info("decrypt_success");
+        DataManager::SetValue(TW_IS_ENCRYPTED, 0);
+      } else {
+        gui2_console::write_raw(gui2_console::severity::error,
+            "FBE user key unlock failed; see recovery.log (metadata is unlocked)\n");
+      }
+    }
+  }
+#endif
+}
