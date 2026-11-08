@@ -149,61 +149,20 @@ open(p, 'w').write(s)
 print('PATCH 3: applied display-ready wait patch')
 PY
 
-    # -------------------------------------------------------------------
-    # PATCH 5: put the decrypt failure reason ON SCREEN. Foreign units report
-    # "cannot decrypt" with nothing to go on: the metadata pass only LOGINFOs
-    # and the GUI keeps showing the password page. fox_spu_bringup.sh writes a
-    # one-line diagnosis to twrp.decrypt.reason, and these two failure exits
-    # print it into the GUI2 console, so a screenshot identifies the cause.
-    # -------------------------------------------------------------------
-    python3 - <<'PY'
-import sys
-p = 'bootable/recovery/partitionmanager.cpp'
-s = open(p).read()
-if 'twrp.decrypt.reason' in s:
-    print('PATCH 5: on-screen reason already present; skip')
-    sys.exit(0)
-pairs = [
-    (
-        '        LOGINFO("Unable to decrypt metadata encryption\\n");\n        return;',
-        '        gui2_console::log_error(\n'
-        '            android::base::GetProperty("twrp.decrypt.reason",\n'
-        '                "metadata decrypt failed - see /tmp/fox_spu.log").c_str());\n'
-        '        LOGINFO("Unable to decrypt metadata encryption\\n");\n        return;'
-    ),
-    (
-        '          LOGINFO("Failed to mount data after metadata decrypt\\n");\n          return;',
-        '          gui2_console::log_error(\n'
-        '              android::base::GetProperty("twrp.decrypt.reason",\n'
-        '                  "metadata ok, mounting /data failed").c_str());\n'
-        '          LOGINFO("Failed to mount data after metadata decrypt\\n");\n          return;'
-    ),
-]
-missed = 0
-for old, new in pairs:
-    if old not in s:
-        missed += 1
-        continue
-    s = s.replace(old, new, 1)
-if missed:
-    print('PATCH 5: ERROR %d anchor(s) missing; refusing to build without the '
-          'on-screen reason' % missed)
-    sys.exit(1)
-open(p, 'w').write(s)
-print('PATCH 5: on-screen decrypt failure reason installed')
-PY
+    # Patch the pinned upstream only after modules and mount cleanup can finish.
+    python3 "${builder_root}/scripts/patch-decrypt.py" "${source_root}"
 
     echo '--- patches applied ---'
     ;;
 
   build)
     cd "${source_root}"
-    # Build integrity: the image must be built from the v1.6 decrypt shape.
-    # PATCH 4 (a DecryptData wait gated on /dev/spcom) is gone because that gate
-    # can never be true at DecryptData time, and these greps make a silently
-    # skipped patch a build failure instead of a half-fixed recovery.
-    if grep -q 'Fox (Y700)' bootable/recovery/partitionmanager.cpp; then
-      echo '::error::partitionmanager.cpp still carries the removed PATCH 4'
+    if ! grep -q 'TB322FC: SPU readiness contract v1' bootable/recovery/partitionmanager.cpp; then
+      echo '::error::SPU startup contract is missing'
+      exit 1
+    fi
+    if grep -q 'ctl.restart recovery' device/lenovo/TB322FC/recovery/root/system/bin/fox_spu_bringup.sh; then
+      echo '::error::Unsafe recovery restart remains in SPU script'
       exit 1
     fi
     if ! grep -q 'Fox (Y700): the display stack shows up' bootable/recovery/twrp.cpp; then
@@ -218,7 +177,7 @@ PY
       echo '::error::PATCH 1 did not drop servicemanager.recovery'
       exit 1
     fi
-    echo 'build integrity: PATCH 1-3 verified in the synced tree'
+    echo 'build integrity: PATCH 1-3 and SPU startup contract verified'
     # Y700 Gen4 builds a ramdisk-only recovery (v4 header, kernel_size=0),
     # so no external prebuilt kernel is required.
     export ALLOW_MISSING_DEPENDENCIES=true

@@ -47,6 +47,26 @@ def main():
             "YARP language resources are missing (scanned: "
             + ", ".join(str(p.relative_to(root)) for p in scanned) + ")")
     require(b"gui2" in all_blobs.lower(), "GUI2 runtime markers are missing")
+    spu_script = (root / "system/bin/fox_spu_bringup.sh").read_text(encoding="utf-8")
+    require("ctl.restart recovery" not in spu_script, "SPU script still restarts recovery")
+    require("logcat -c" not in "\n".join(
+        line for line in spu_script.splitlines() if not line.lstrip().startswith("#")),
+        "SPU script destroys diagnostic logs")
+    require(b"Preparing secure storage; see /tmp/fox_spu.log" in binary,
+            "Recovery is missing the SPU readiness patch")
+    require(b"Metadata key unlock failed; see recovery.log and fox_spu.log" in all_blobs,
+            "Recovery is missing raw on-screen decrypt errors")
+    probe = root / "system/bin/fox_spu_check"
+    require(probe.is_file(), "Missing SPU AIDL publication checker")
+    probe_bytes = probe.read_bytes()
+    require(probe_bytes[:4] == b"\x7fELF" and
+            struct.unpack_from("<H", probe_bytes, 18)[0] == 183,
+            "SPU publication checker is not AArch64 ELF")
+    for rel in ("system/bin/fox_spu_bringup.sh", "system/bin/fox_crypto_select.sh", "vendor/bin/prepdecrypt.sh"):
+        require(b"\r" not in (root / rel).read_bytes(), f"CRLF shell script in ramdisk: {rel}")
+    init_rc = (root / "init.recovery.qcom.rc").read_text(encoding="utf-8")
+    require("fox_clear_bcb" not in init_rc and "ctl.restart recovery" not in init_rc,
+            "Unsafe background BCB/recovery control remains in init")
     fonts = ["wqy-microhei.ttf", "DroidSansMono.ttf"]
     for font in fonts:
         path = root / "twres/fonts" / font
@@ -59,6 +79,9 @@ def main():
         "encoded_os_version": os_version,
         "recovery_architecture": "aarch64", "yarp_resources": True,
         "gui2_fonts": fonts,
+        "spu_readiness_contract": True,
+        "spu_aidl_publication_checker": True,
+        "automatic_recovery_restart": False,
         "validation_scope": "Build and static checks only; on-device boot and decryption are untested."
     }
     print(json.dumps(report, indent=2))
