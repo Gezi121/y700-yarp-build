@@ -1,8 +1,9 @@
 # TB322FC / SM8750P 解密启动修复
 
 目标设备是 Y700 四代至尊 TB322FC（sun / elden、SM8750P），不是五代 SM8850。
-本轮以 GitHub 设备树 1b08bc5、构建仓库 7322d02 和锁定的上游源码为基线。
-没有刷机、没有对设备执行命令。没有群友失败日志，不能断言他们的唯一根因。
+本轮以 GitHub 设备树 1b08bc5、构建仓库 7322d02 和锁定的上游源码为基线。首版镜像已在
+TB322FC 实机复现启动阻塞，见下文「实机确认的启动阻塞」；该段结论来自日志与手动干预，
+解密链路的其余部分（SPU 准备、metadata、CE）在解除阻塞后已跑通。
 
 ## 从代码可以确认的原因
 
@@ -24,6 +25,34 @@
 8. GUI2 log_error 的参数是翻译键，不是任意错误文本。改用 write_raw 显示错误。
 9. 上游 Decrypt_User 使用 user 0 的 spblob 是否存在来决定所有用户的分支。
    改为检查选中的 user_id，支持不同用户的 legacy/SP 状态差异。
+
+
+## 实机确认的启动阻塞（20261109 晚）
+
+首版镜像刷入后 UI 停在启动画面，`/tmp/recovery.log` 只有 1.7 KB，最后一行是
+`=> Processing /etc/recovery.fstab`；logcat 每秒重复
+`Waited one second for android.hardware.boot.IBootControl/default`，init 同时报
+`Could not find 'aidl/android.hardware.boot.IBootControl/default' for ctl.interface_start`。
+
+原因是启动路径上的无超时等待：
+
+1. `twrp.cpp` 的 `run_early_startup()` 调 `PartitionManager.ProcessFstab()`。
+2. `ProcessFstab()` 的第一行就调用 `GetSuperPartition()`，它用
+   `BootControlClient::WaitForService()` 等 `android.hardware.boot.IBootControl/default`。
+3. recovery 的 `/system/etc/init/hw/init.rc` 只 import `/init.recovery.*.rc`，不解析
+   `/vendor/etc/init`；该 HAL 的 rc 是 `class early_hal`，于是服务从未定义，
+   `WaitForService()` 永远等下去。它在 `/vendor` 挂载之前执行，属于循环依赖。
+4. 结果是 fstab 未处理、super 未映射、`DecryptData()` 从未被调用——与解密算法无关。
+
+实机验证（HA296Z3H，手动 `setsid /vendor/bin/hw/android.hardware.boot-service.qti &`）：
+同一进程立刻继续，`Done processing fstab files` → super 解析为
+`/dev/block/bootdevice/by-name/super` → 79 s 请求 SPU 准备、96 s ready（约 17 s）→
+metadata 解密成功 → 输入密码后 `/data`（`/dev/block/dm-15`，f2fs）挂载。
+
+修复：`GetSuperPartition()` 不再查询 boot HAL，改用 `ro.boot.super_partition`，
+否则用当前槽位后缀并检查 `super<slot>` 是否存在，最后回退到不带后缀的 `super`——
+与 `fs_mgr_get_super_partition_name()` 的取名依据一致。`SetActiveSlot()`（用户手动
+切 A/B 槽）仍保留 boot HAL 查询，缺该 HAL 时会卡住，属已知遗留，不扩大本次范围。
 
 ## 启动顺序
 
@@ -93,3 +122,11 @@ init 提前只挂 firmware，供 remoteproc 加载固件。内核模块加载和
 - 产物校验新增准备脚本、检查器、错误字符串、LF 行尾、禁止恢复重启/后台清 BCB。
 
 这些是离线验证，不等于解密速度或群友成功率已实测。
+
+### 20261109 晚追加
+
+- 补丁脚本对同一段 `GetSuperPartition()` 做锚点替换，锚点失配即构建失败；已用
+  pin 的上游原文和已打补丁的树各跑两次，两条路径均为幂等。
+- `verify-image.py` 现在同时要求镜像内出现新的静态回退日志、且不再出现被删掉的
+  阻塞分支日志。
+- 该修复尚未重新云端构建、尚未刷机；上面那份实机结论来自手动拉起 boot HAL 的实验。

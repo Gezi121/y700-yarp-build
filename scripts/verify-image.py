@@ -56,6 +56,10 @@ def main():
             "Recovery is missing the SPU readiness patch")
     require(b"Metadata key unlock failed; see recovery.log and fox_spu.log" in all_blobs,
             "Recovery is missing raw on-screen decrypt errors")
+    require(b"No boot control HAL; using the static super partition path" in binary,
+            "Recovery is missing the super partition naming fix")
+    require(b"Boot control HAL unavailable, using static super partition path" not in binary,
+            "Recovery still waits for the vendor boot HAL before fstab")
     probe = root / "system/bin/fox_spu_check"
     require(probe.is_file(), "Missing SPU AIDL publication checker")
     probe_bytes = probe.read_bytes()
@@ -80,6 +84,7 @@ def main():
         "recovery_architecture": "aarch64", "yarp_resources": True,
         "gui2_fonts": fonts,
         "spu_readiness_contract": True,
+        "super_partition_naming": "boot slot properties",
         "spu_aidl_publication_checker": True,
         "automatic_recovery_restart": False,
         "validation_scope": "Build and static checks only; on-device boot and decryption are untested."

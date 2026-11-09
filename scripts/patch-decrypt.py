@@ -11,16 +11,53 @@ def replace_once(text, old, new):
         raise RuntimeError(f"Expected one source anchor, found {text.count(old)}: {old[:90]!r}")
     return text.replace(old, new, 1)
 
+SUPER_WAIT_HAL = (
+    '  if (const auto module = BootControlClient::WaitForService()) {\n'
+    '    super_device = fs_mgr_get_super_partition_name(module->GetCurrentSlot());\n'
+    '  } else {\n'
+    '    // No boot control HAL is available.\n'
+    '    LOGINFO("Boot control HAL unavailable, using static super partition path\\n");\n'
+    '  }\n'
+)
+
+# ProcessFstab asks for the super partition name before it mounts anything, and
+# BootControlClient::WaitForService() has no timeout. Recovery does not import
+# /vendor/etc/init, so the vendor boot HAL (class early_hal) is never registered
+# and startup stopped dead at "Processing /etc/recovery.fstab" until the service
+# was started by hand. Name the partition from the boot slot instead, which is
+# what fs_mgr_get_super_partition_name() derives the name from anyway.
+SUPER_WAIT_HAL_REPLACEMENT = (
+    '  // TB322FC: name super from the boot slot, not the boot HAL.\n'
+    '  const std::string named_super = android::base::GetProperty("ro.boot.super_partition", "");\n'
+    '  const std::string slot_suffix = GetActiveSlotSuffix();\n'
+    '  if (!named_super.empty()) {\n'
+    '    super_device = named_super;\n'
+    '  } else if (!slot_suffix.empty() &&\n'
+    '             access(GetByNamePath("super" + slot_suffix).c_str(), F_OK) == 0) {\n'
+    '    super_device = "super" + slot_suffix;\n'
+    '  } else {\n'
+    '    LOGINFO("No boot control HAL; using the static super partition path\\n");\n'
+    '  }\n'
+)
+
+
+def patch_super_partition(text):
+    if "// TB322FC: name super from the boot slot" in text:
+        return text
+    return replace_once(text, SUPER_WAIT_HAL, SUPER_WAIT_HAL_REPLACEMENT)
+
 
 def patch(root):
     path = root / "bootable/recovery/partitionmanager.cpp"
-    text = path.read_text(encoding="utf-8")
+    text = patch_super_partition(path.read_text(encoding="utf-8"))
     marker = "// TB322FC: SPU readiness contract v1"
     if marker in text:
         if "// TB322FC: defer early DE calls" not in (root / "bootable/recovery/partition.cpp").read_text(encoding="utf-8"):
             raise RuntimeError("Incomplete previous patch: early DE guard is missing")
         if "// TB322FC: inspect the selected user" not in (root / "system/vold/Decrypt.cpp").read_text(encoding="utf-8"):
             raise RuntimeError("Incomplete previous patch: per-user SP dispatch is missing")
+        # The super-partition fix above may be newer than the rest of the set.
+        path.write_text(text, encoding="utf-8", newline="\n")
         print("SPU startup contract already installed")
         return
     # Replace the whole small function: this also removes the old PATCH 5,
@@ -80,6 +117,11 @@ def patch(root):
     vold_path.write_text(vold, encoding="utf-8", newline="\n")
     part_path.write_text(part, encoding="utf-8", newline="\n")
     path.write_text(text, encoding="utf-8", newline="\n")
+    # Only the user-triggered slot switch may still ask for the boot HAL.
+    if "// TB322FC: name super from the boot slot" not in text:
+        raise RuntimeError("Super partition naming fix is missing")
+    if text.count("BootControlClient::WaitForService") != 1:
+        raise RuntimeError("Startup still waits for the boot HAL")
     print("Installed SPU startup contract and manual metadata retry")
 
 
