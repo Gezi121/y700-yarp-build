@@ -129,4 +129,6 @@ init 提前只挂 firmware，供 remoteproc 加载固件。内核模块加载和
   pin 的上游原文和已打补丁的树各跑两次，两条路径均为幂等。
 - `verify-image.py` 现在同时要求镜像内出现新的静态回退日志、且不再出现被删掉的
   阻塞分支日志。
-- 该修复尚未重新云端构建、尚未刷机；上面那份实机结论来自手动拉起 boot HAL 的实验。
+- `GetSuperPartition()` 是 static 成员，槽位后缀直接读 `ro.boot.slot_suffix`；
+  用 `GetActiveSlotSuffix()` 会让构建在 92% 编译失败（run 42599742487，已修正）。
+- 修正后的版本尚未重新云端构建、尚未刷机；上面那份实机结论来自手动拉起 boot HAL 的实验。

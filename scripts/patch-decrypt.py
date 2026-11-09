@@ -29,7 +29,7 @@ SUPER_WAIT_HAL = (
 SUPER_WAIT_HAL_REPLACEMENT = (
     '  // TB322FC: name super from the boot slot, not the boot HAL.\n'
     '  const std::string named_super = android::base::GetProperty("ro.boot.super_partition", "");\n'
-    '  const std::string slot_suffix = GetActiveSlotSuffix();\n'
+    '  const std::string slot_suffix = android::base::GetProperty("ro.boot.slot_suffix", "");\n'
     '  if (!named_super.empty()) {\n'
     '    super_device = named_super;\n'
     '  } else if (!slot_suffix.empty() &&\n'
