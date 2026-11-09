@@ -1,9 +1,9 @@
 # TB322FC / SM8750P 解密启动修复
 
 目标设备是 Y700 四代至尊 TB322FC（sun / elden、SM8750P），不是五代 SM8850。
-本轮以 GitHub 设备树 1b08bc5、构建仓库 7322d02 和锁定的上游源码为基线。首版镜像已在
-TB322FC 实机复现启动阻塞，见下文「实机确认的启动阻塞」；该段结论来自日志与手动干预，
-解密链路的其余部分（SPU 准备、metadata、CE）在解除阻塞后已跑通。
+本轮以 GitHub 设备树 1b08bc5、构建仓库 7322d02 和锁定的上游源码为基线。首版镜像在
+TB322FC 实机复现了「启动死在 boot HAL 等待」的阻塞；修复版（run 42630430036）已刷入
+recovery_a 并通过两次冷启动验收：不手动干预，约 13 s 完成 SPU 准备并自动解密到主界面。
 
 ## 从代码可以确认的原因
 
@@ -121,7 +121,7 @@ init 提前只挂 firmware，供 remoteproc 加载固件。内核模块加载和
 - Binder 检查器通过 AArch64 目标编译；完整链接由 Android 构建验证。
 - 产物校验新增准备脚本、检查器、错误字符串、LF 行尾、禁止恢复重启/后台清 BCB。
 
-这些是离线验证，不等于解密速度或群友成功率已实测。
+上述离线项之外，下面的 20261109 晚实机验收已经完成。
 
 ### 20261109 晚追加
 
@@ -130,5 +130,22 @@ init 提前只挂 firmware，供 remoteproc 加载固件。内核模块加载和
 - `verify-image.py` 现在同时要求镜像内出现新的静态回退日志、且不再出现被删掉的
   阻塞分支日志。
 - `GetSuperPartition()` 是 static 成员，槽位后缀直接读 `ro.boot.slot_suffix`；
-  用 `GetActiveSlotSuffix()` 会让构建在 92% 编译失败（run 42599742487，已修正）。
-- 修正后的版本尚未重新云端构建、尚未刷机；上面那份实机结论来自手动拉起 boot HAL 的实验。
+- 修正后的版本已由 run 42630430036 重新构建（1h17m，全绿），产物 SHA256
+  `4dc7d2ca54e21538ea62bbff2249fab55b929e1c6ce5febb41049d06d46d7562`。
+
+### 实机验收（20261109，TB322FC，刷入 recovery_a）
+
+- 刷写：`dd if=/data/local/tmp/rec.img of=/dev/block/by-name/recovery_a bs=1M`，
+  回读分区 SHA256 与产物一致；**不手动启动任何 boot HAL**。
+- 版本：`3.7.1_16-TB322FC-8a58fc3b-dirty`，冷启动后 `/tmp/recovery.log`：
+  - 37/38 行 `No boot control HAL; using the static super partition path`（新代码路径）
+  - 36 行 `=> Processing /etc/recovery.fstab` → 136 行 `Done processing fstab files`（不再卡住）
+  - 178 行 `Preparing secure storage; see /tmp/fox_spu.log`
+  - 187 行 `Successfully decrypted metadata encrypted data partition ... '/dev/block/mapper/userdata'`
+  - 299/300 行 `All found users are decrypted.` / `Data successfully decrypted`
+  - 327 行 `Successfully decrypted with default password.`（本机无锁屏密码分支）
+- `fox_spu.log`：`[11s] bring-up requested` → `[13s] SPU ready`（准备耗时约 2 秒），
+  抓取时 uptime 37.7 s，`/data` 已挂载为 `/dev/block/dm-15`（f2fs），MTP 正常。
+- 复现两次（两次冷启动行号与结果一致），不存在 recovery 自重启。
+- 未覆盖：有锁屏密码/PIN/图案的 Gatekeeper 校验分支、TEE Gatekeeper 后端、
+  `SetActiveSlot()` 手动切槽（仍保留 boot HAL 查询，缺 HAL 会卡，已知遗留）。
