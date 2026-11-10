@@ -26,7 +26,10 @@ adb 能认到设备”的状态下运行本脚本，把生成的 zip 发回来�
 param(
     [string]$Serial = "",
     [string]$OutDir = "",
-    [string]$Adb = ""
+    [string]$Adb = "",
+    [switch]$Follow,                 # 先持续录制 logcat，直到你按回车（用于“能复现”的机器）
+    [int]$FollowSeconds = 0,         # >0 时不等待回车，录制指定秒数（便于自动化测试）
+    [string]$BumpLogcatBuffer = ""   # 例如 16M：录制前放大 logd 缓冲（只影响之后的日志）
 )
 
 $ErrorActionPreference = "Continue"
@@ -43,6 +46,8 @@ function Resolve-Adb {
     $candidates = @()
     if ($Hint) { $candidates += $Hint }
     $candidates += @(
+        # 绿色版：优先用脚本同目录的 adb.exe（打包时放一个）
+        (Join-Path $PSScriptRoot "adb.exe"),
         "E:\platform-tools\adb.exe",
         "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe",
         "$env:ANDROID_HOME\platform-tools\adb.exe",
@@ -136,6 +141,33 @@ function Save-RemoteFile {
     }
     Write-Warn2 ("拉取失败: " + $Remote + " / " + ($pull | Out-String).Trim())
     return $false
+}
+
+# ---------- 3.5 可选：先持续录制 logcat（-Follow） ----------
+if ($Follow) {
+    if ($BumpLogcatBuffer) {
+        Run-Adb -CmdArgs @("shell", ("logcat -G " + $BumpLogcatBuffer)) | Out-Null
+        Write-Ok ("已尝试把 logd 缓冲放大到 " + $BumpLogcatBuffer)
+    }
+    $followPath = Join-Path $workDir "logcat-follow.txt"
+    Write-Step "开始持续录制 logcat ..."
+    $followProc = Start-Process -FilePath $adbPath `
+        -ArgumentList @("-s", $target, "logcat", "-b", "all", "-v", "threadtime") `
+        -RedirectStandardOutput $followPath -NoNewWindow -PassThru
+    if ($FollowSeconds -gt 0) {
+        Write-Host ("    录制 " + $FollowSeconds + " 秒后自动停止 ...") -ForegroundColor Yellow
+        Start-Sleep -Seconds $FollowSeconds
+    } else {
+        Write-Host "    现在去复现问题（进解密页 / 等它报错），然后回到这里按回车停止录制。" -ForegroundColor Yellow
+        [void](Read-Host "    按回车结束录制")
+    }
+    Stop-Process -Id $followProc.Id -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 500
+    if (Test-Path $followPath) {
+        Write-Ok ("录制完成: logcat-follow.txt (" + (Get-Item $followPath).Length + " B)")
+    } else {
+        Write-Warn2 "没有生成录制文件（adb logcat 可能没能启动）"
+    }
 }
 
 # ---------- 4. 基本信息 ----------
