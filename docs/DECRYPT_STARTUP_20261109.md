@@ -149,3 +149,35 @@ init 提前只挂 firmware，供 remoteproc 加载固件。内核模块加载和
 - 复现两次（两次冷启动行号与结果一致），不存在 recovery 自重启。
 - 未覆盖：有锁屏密码/PIN/图案的 Gatekeeper 校验分支、TEE Gatekeeper 后端、
   `SetActiveSlot()` 手动切槽（仍保留 boot HAL 查询，缺 HAL 会卡，已知遗留）。
+
+## V4.1：macchiato 加载被拒（-11）不再当作致命错误（2026-11-10）
+
+故障机 HA2CBTTZ 复现：启动编排、固件哈希、`secnvm`/`spunvm` 目录、挂载与权限全部与
+正常机一致，SP 固件版本同为 v57.7.33C4AD7D，基础 SP 应用（asym_cryptoapp / cryptoapp /
+sp_keymaster / sp_nvm）加载成功，只有 macchiato 被拒：
+
+```
+spcomlib: [spcom_load_app] file [/vendor/firmware_mnt/image/macch1p.sig] read size [18828]
+spcomlib: [spcom_load_app_from_buffer] app buf successfully created for [macchiato]
+spcomlib: [spcom_load_app_from_buffer] Load App [macchiato] ret [20]        ← 20 = 应答报文长度
+spcomlib: [spcom_load_app_from_buffer] Load App resp->error_code: [-11]    ← SP 返回的错误码
+```
+
+`ret [20]` 是 SP 应答长度，`-11` 来自应答体（`Load app error_code from SP [-11]`），
+不是 spdaemon 生成的错误码。同一台设备正常启动 Android 时 macchiato 与 Weaver 均可用，
+说明「重复加载被 SP 拒绝」不等于「能力不可用」。
+
+旧脚本把这种应答当成致命错误直接 `exit 1`，导致 KeyMint / Gatekeeper / Weaver 一个都不
+启动，解密在碰密钥之前就被掐断。V4.1 起：
+
+1. 识别 `Loading SP App [macchiato] failed` → `twrp.spu.macchiato=rejected`，**保持
+   spdaemon 运行**，继续启动 HAL；
+2. 是否可用仍由 `fox_spu_check` 的 Binder 发布检查决定，只有全部 AIDL 发布才
+   `twrp.spu.ready=true`；
+3. 其它失败（spdaemon 起不来、固件缺失、AIDL 不全）仍然失败，reason 里带
+   `macchiato=<state>`；
+4. 新增版本标记 `ro.twrp.yarp.release=4.1`。
+
+设备树对应提交：`69943739c328c49a7bf9f15452f9a4b7fd97a444`。
+本轮**未**在故障机上验证 V4.1 成品；离线测试新增两条（拒绝但 AIDL 全发布 → ready；
+拒绝且 AIDL 缺失 → 失败并带 macchiato=rejected）。

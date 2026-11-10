@@ -52,6 +52,10 @@ def main():
     require("logcat -c" not in "\n".join(
         line for line in spu_script.splitlines() if not line.lstrip().startswith("#")),
         "SPU script destroys diagnostic logs")
+    require("twrp.spu.macchiato" in spu_script,
+            "SPU script lost the V4.1 macchiato rejection handling")
+    require("macchiato=" in spu_script,
+            "SPU script no longer reports the macchiato state in the ready/failure log")
     require(b"Preparing secure storage; see /tmp/fox_spu.log" in binary,
             "Recovery is missing the SPU readiness patch")
     require(b"Metadata key unlock failed; see recovery.log and fox_spu.log" in all_blobs,

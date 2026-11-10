@@ -60,7 +60,8 @@ case "$cmd" in
    echo "logcat $*" >> /calls
    [ -f /fail_spdaemon ] && { echo 'going to sleep for a day'; exit 0; }
    [ -f /retry_spdaemon ] && [ "$(cat /spdaemon_count)" = 1 ] && { echo 'going to sleep for a day'; exit 0; }
-   echo 'SP Apps were loaded successfully' ;;
+  [ -f /macch_reject ] && { echo 'E/spdaemon(  1): Loading SP App [macchiato] failed. ret [-11].'; exit 0; }
+  echo 'SP Apps were loaded successfully' ;;
  fox_spu_check)
    if [ -f /fail_interfaces ]; then echo 'missing: android.hardware.weaver.IWeaver/default'; exit 1; fi ;;
 esac
@@ -191,6 +192,21 @@ class Startup(unittest.TestCase):
         self.assertIn("--pid=401", calls)
         self.assertIn("--pid=402", calls)
 
+
+    def test_macchiato_rejection_is_not_fatal(self):
+        self.write("macch_reject", "1")
+        _, calls = self.run_script()
+        self.assertEqual((self.root / "props/twrp.spu.ready").read_text().strip(), "true")
+        self.assertEqual((self.root / "props/twrp.spu.macchiato").read_text().strip(), "rejected")
+        self.assertIn("ctl.start vendor.keymint-spu-qti", calls)
+        self.assertNotIn("ctl.stop vendor.spdaemon", calls)
+
+    def test_macchiato_rejection_without_aidl_is_not_ready(self):
+        self.write("macch_reject", "1")
+        self.write("fail_interfaces", "1")
+        log, _ = self.run_script(success=False)
+        self.assertIn("macchiato=rejected", log)
+        self.assertEqual((self.root / "props/twrp.spu.ready").read_text().strip(), "false")
     def test_missing_aidl_is_not_ready(self):
         self.write("fail_interfaces", "1")
         self.run_script(success=False)
