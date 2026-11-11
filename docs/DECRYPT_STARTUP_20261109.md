@@ -181,3 +181,30 @@ spcomlib: [spcom_load_app_from_buffer] Load App resp->error_code: [-11]    ← S
 设备树对应提交：`69943739c328c49a7bf9f15452f9a4b7fd97a444`。
 本轮**未**在故障机上验证 V4.1 成品；离线测试新增两条（拒绝但 AIDL 全发布 → ready；
 拒绝且 AIDL 缺失 → 失败并带 macchiato=rejected）。
+
+## V4.2：SELinux 权限分析（2026-11-10）
+
+对一轮 recovery 启动的 8741 行 logcat 做了 AVC 统计（2026 条 `avc: denied`）：
+
+| 源域 | 条数 | permissive |
+|---|---:|---|
+| recovery | 2011 | 1（域本身 permissive，拒绝不生效） |
+| init | 13 | 1 |
+| ueventd | 1 | 1 |
+| **charger** | **1** | **0 ← 唯一真实拒绝** |
+
+唯一一条 `permissive=0`：
+
+```
+avc: denied { wake_alarm } for capability=35
+  scontext=u:r:charger:s0 tcontext=u:r:charger:s0 tclass=capability2 permissive=0
+```
+
+处理：
+
+- 设备树新增 `sepolicy/charger.te`：`allow charger self:capability2 wake_alarm;`，
+  并通过 `BOARD_SEPOLICY_DIRS += $(call my-dir)/sepolicy` 并入平台策略；
+- 其余 2025 条全部是 permissive 域的记录（recovery 会遍历 dm/block/selinuxfs/data 等，
+  1484 个不同组合），**不逐条补**——TWRP 依赖 permissive recovery，补全没有收益且会带来
+  维护负担；真要转 enforcing 需要单独一轮全量策略工作。
+- 版本标记 `ro.twrp.yarp.release=4.2`，设备树提交 `dac7a72a3294bd375b28e538e206370e19856e85`。
